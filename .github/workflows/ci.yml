@@ -17,5 +17,5 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
-      - run: pytest -m "not integration" --cov=app --cov-fail-under=80
+      - run: python -mpytest -m "not integration" --cov=app --cov-fail-under=80
       - run: docker build -t github-issues-service .
