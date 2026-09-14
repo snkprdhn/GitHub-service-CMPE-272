@@ -1,0 +1,242 @@
+openapi: 3.1.0
+info:
+  title: GitHub Issues Service
+  version: 1.0.0
+  description: HTTP wrapper around GitHub Issues for one configured repository.
+servers:
+  - url: http://localhost:{port}
+    variables:
+      port:
+        default: '8000'
+paths:
+  /healthz:
+    get:
+      summary: Check service health
+      responses:
+        '200':
+          description: Service is running
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: ok } }, required: [status] }
+  /issues:
+    post:
+      summary: Create an issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueCreate' }
+            example: { title: Login fails, body: The sign-in button returns 500., labels: [bug] }
+      responses:
+        '201':
+          description: Issue created
+          headers:
+            Location: { schema: { type: string }, example: /issues/42 }
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Issue' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    get:
+      summary: List issues
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [open, closed, all], default: open } }
+        - { name: labels, in: query, schema: { type: string }, description: Comma-separated label names. }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: Issues from GitHub. The Link header preserves GitHub pagination links.
+          headers:
+            Link: { schema: { type: string }, description: GitHub pagination link header. }
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Issue' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /issues/{number}:
+    parameters:
+      - { name: number, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      summary: Get an issue
+      responses:
+        '200': { description: Issue found, content: { application/json: { schema: { $ref: '#/components/schemas/Issue' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    patch:
+      summary: Update, close, or reopen an issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueUpdate' }
+            example: { title: Login fails on Safari, state: closed }
+      responses:
+        '200': { description: Issue updated, content: { application/json: { schema: { $ref: '#/components/schemas/Issue' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /issues/{number}/comments:
+    post:
+      summary: Add an issue comment
+      parameters:
+        - { name: number, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommentCreate' }
+            example: { body: I can reproduce this in version 1.2. }
+      responses:
+        '201': { description: Comment created, content: { application/json: { schema: { $ref: '#/components/schemas/Comment' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /webhook:
+    post:
+      summary: Receive a GitHub webhook delivery
+      description: Validates X-Hub-Signature-256, accepts ping, issues, and issue_comment events, then records the delivery ID once.
+      parameters:
+        - { name: X-Hub-Signature-256, in: header, required: true, schema: { type: string }, description: sha256 HMAC signature from GitHub. }
+        - { name: X-GitHub-Event, in: header, required: true, schema: { type: string, enum: [ping, issues, issue_comment] } }
+        - { name: X-GitHub-Delivery, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { type: object } }
+      responses:
+        '204': { description: Delivery acknowledged. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /events:
+    get:
+      summary: List recently processed webhook events
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: Recent events, newest first.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/EventRecord' } }
+components:
+  securitySchemes:
+    GitHubServerToken:
+      type: http
+      scheme: bearer
+      description: Server-side GitHub fine-grained token supplied through GITHUB_TOKEN; clients do not send this token.
+  schemas:
+    Label:
+      type: object
+      required: [name]
+      properties: { name: { type: string, example: bug } }
+    IssueCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, example: Login fails }
+        body: { type: [string, 'null'] }
+        labels: { type: array, items: { type: string } }
+    IssueUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1 }
+        body: { type: [string, 'null'] }
+        state: { type: string, enum: [open, closed] }
+    Issue:
+      type: object
+      required: [number, html_url, state, title, labels, created_at, updated_at]
+      properties:
+        number: { type: integer, example: 42 }
+        html_url: { type: string, format: uri, example: https://github.com/example/repo/issues/42 }
+        state: { type: string, enum: [open, closed] }
+        title: { type: string }
+        body: { type: [string, 'null'] }
+        labels: { type: array, items: { $ref: '#/components/schemas/Label' } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      example:
+        number: 42
+        html_url: https://github.com/example/repo/issues/42
+        state: open
+        title: Login fails
+        body: The sign-in button returns 500.
+        labels: [{ name: bug }]
+        created_at: '2026-09-13T18:00:00Z'
+        updated_at: '2026-09-13T18:00:00Z'
+    CommentCreate:
+      type: object
+      required: [body]
+      properties: { body: { type: string, minLength: 1 } }
+    Comment:
+      type: object
+      required: [id, body, user, created_at, html_url]
+      properties:
+        id: { type: integer }
+        body: { type: string }
+        user: { type: string, example: octocat }
+        created_at: { type: string, format: date-time }
+        html_url: { type: string, format: uri }
+      example:
+        id: 1001
+        body: I can reproduce this issue.
+        user: octocat
+        created_at: '2026-09-13T18:05:00Z'
+        html_url: https://github.com/example/repo/issues/42#issuecomment-1001
+    EventRecord:
+      type: object
+      required: [id, event, timestamp]
+      properties:
+        id: { type: string }
+        event: { type: string, enum: [ping, issues, issue_comment] }
+        action: { type: [string, 'null'] }
+        issue_number: { type: [integer, 'null'] }
+        timestamp: { type: string, format: date-time }
+      example:
+        id: 2f4a8fd0-95ef-11f0-9a1c-acde48001122
+        event: issues
+        action: opened
+        issue_number: 42
+        timestamp: '2026-09-13T18:00:01Z'
+    Error:
+      type: object
+      required: [detail, status]
+      properties:
+        detail: { type: string, example: Issue not found }
+        status: { type: integer, example: 404 }
+        request_id: { type: [string, 'null'] }
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { detail: Field required, status: 400 } } }
+    Unauthorized:
+      description: Missing, invalid, or unauthorized credential/signature.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { detail: Webhook signature is invalid, status: 401 } } }
+    Forbidden:
+      description: The GitHub token lacks permission for the operation.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { detail: Resource not accessible by personal access token, status: 403 } } }
+    NotFound:
+      description: The issue was not found.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { detail: Not Found, status: 404 } } }
+    RateLimited:
+      description: GitHub rate limit is exhausted.
+      headers: { Retry-After: { schema: { type: string } } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { detail: GitHub rate limit exceeded, status: 429 } } }
+    Unavailable:
+      description: GitHub is temporarily unavailable.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { detail: GitHub is temporarily unavailable, status: 503 } } }
